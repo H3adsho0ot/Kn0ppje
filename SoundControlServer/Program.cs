@@ -11,66 +11,88 @@ namespace SoundControlServer
 {
     public class Program
     {
-        private static MMDevice device;
-        private static List<VolumeModule> volumeModules;
-        private static bool newCycle;
+        private static MMDevice _device;
+        private static List<VolumeModule> _volumeModules;
+        private static bool _newCycle;
+        private static Serial _serial;
 
         private static void Main(string[] args)
         {
-            volumeModules = new List<VolumeModule>();
+            _serial = new Serial(ConfigurationManager.AppSettings.Get("COMPort"), Convert.ToInt32(ConfigurationManager.AppSettings.Get("BaudRate")));
+            _volumeModules = new List<VolumeModule>();
 
-            while (true)
+            try
             {
-                MMDeviceEnumerator DevEnum = new MMDeviceEnumerator();
-                device = DevEnum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-
-                var sessions = device.AudioSessionManager.Sessions;
-                if (sessions == null) return;
-
-                checkModule(new VolumeModule(device));
-
-                newCycle = true;
-
-                for (int i = 0; i < sessions.Count; i++)
+                if (_serial.Open())
                 {
-                    AudioSessionControl session = sessions[i];
-
-                    if (session != null)
+                    while (true)
                     {
-                        VolumeModule module = new VolumeModule(session);
+                        MMDeviceEnumerator DevEnum = new MMDeviceEnumerator();
+                        _device = DevEnum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
 
-                        if (!string.IsNullOrEmpty(module.Title))
+                        var sessions = _device.AudioSessionManager.Sessions;
+                        if (sessions == null) return;
+
+                        checkModule(new VolumeModule(_device));
+
+                        _newCycle = true;
+
+                        for (int i = 0; i < sessions.Count; i++)
                         {
-                            checkModule(module);
-                            newCycle = false;
+                            AudioSessionControl session = sessions[i];
+
+                            if (session != null)
+                            {
+                                VolumeModule module = new VolumeModule(session);
+
+                                if (!string.IsNullOrEmpty(module.Title))
+                                {
+                                    checkModule(module);
+                                    _newCycle = false;
+                                }
+                            }
                         }
+
+                        Console.CursorVisible = false;
+                        Thread.Sleep(Convert.ToInt16(ConfigurationManager.AppSettings.Get("RefreshRate")));
                     }
                 }
+                else
+                {
+                    Console.WriteLine("Failed to open COM port");
+                }
 
-                Console.CursorVisible = false;
-                Thread.Sleep(Convert.ToInt16(ConfigurationManager.AppSettings.Get("RefreshRate")));
+                Console.ReadLine();
+            }
+            finally
+            {
+                _serial.Close();
+                if (_device != null)
+                {
+                    _device.Dispose();
+                }
             }
         }
 
         private static void checkModule(VolumeModule module)
         {
-            if (newCycle)
+            if (_newCycle)
             {
-                for (int i = volumeModules.Count - 1; i > 0; i--)
+                for (int i = _volumeModules.Count - 1; i > 0; i--)
                 {
-                    if (volumeModules[i].checkedInCycle)
+                    if (_volumeModules[i].checkedInCycle)
                     {
-                        volumeModules[i].checkedInCycle = false;
+                        _volumeModules[i].checkedInCycle = false;
                     }
                     else
                     {
-                        Serial.Write(new VolumeModule() { PID = volumeModules[i].PID, Type = "Delete" });
-                        volumeModules.Remove(volumeModules[i]);
+                        _serial.Write(new VolumeModule() { PID = _volumeModules[i].PID, Type = "Delete" });
+                        _volumeModules.Remove(_volumeModules[i]);
                     }
                 }
             }
 
-            VolumeModule existingModule = volumeModules.FirstOrDefault(o => o.PID == module.PID);            
+            VolumeModule existingModule = _volumeModules.FirstOrDefault(o => o.PID == module.PID);
 
             if (existingModule != null)
             {
@@ -78,26 +100,26 @@ namespace SoundControlServer
 
                 if (existingModule.Title != module.Title)
                 {
-                    Serial.Write(new VolumeModule() { PID = module.PID, Title = module.Title, Type = "Change" });
+                    _serial.Write(new VolumeModule() { PID = module.PID, Title = module.Title, Type = "Change" });
                     existingModule.Title = module.Title;
                 }
 
                 if (existingModule.Volume != module.Volume)
                 {
-                    Serial.Write(new VolumeModule() { PID = module.PID, Volume = module.Volume, Type = "Change" });
+                    _serial.Write(new VolumeModule() { PID = module.PID, Volume = module.Volume, Type = "Change" });
                     existingModule.Volume = module.Volume;
                 }
 
                 if (existingModule.IsMuted != module.IsMuted)
                 {
-                    Serial.Write(new VolumeModule() { PID = module.PID, IsMuted = module.IsMuted, Type = "Change" });
+                    _serial.Write(new VolumeModule() { PID = module.PID, IsMuted = module.IsMuted, Type = "Change" });
                     existingModule.IsMuted = module.IsMuted;
                 }
             }
             else
             {
-                volumeModules.Add(module);
-                Serial.Write(module);
+                _volumeModules.Add(module);
+                _serial.Write(module);
             }
         }
     }
